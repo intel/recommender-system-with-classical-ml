@@ -1,0 +1,9 @@
+files:
+  data_path: /mnt/data/processed_data   # train and valid data path
+  model_save_path: /mnt/models         # model saving path
+  pred_save_path:  /mnt/result         # prediction result saving path
+
+training:
+  num_iterations: 1000 
+  num_iterations_debug: 10
+  debug: False
