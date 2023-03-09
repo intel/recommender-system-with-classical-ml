@@ -14,8 +14,7 @@ import ray
 ray.init(address='auto')
 cpus_per_actor = 15
 num_actors = 20
-ray_params = RayParams(num_actors=num_actors, cpus_per_actor=cpus_per_actor, elastic_training=True, max_failed_actors=1, max_actor_restarts=1)
-
+ray_params = RayParams(num_actors=num_actors, cpus_per_actor=cpus_per_actor, elastic_training=True, max_failed_actors=1, max_actor_restarts=2)
 
 very_start = time.time()
 
@@ -34,7 +33,7 @@ def compute_rce_fast(pred, gt):
     return (1.0 - cross_entropy/strawman_cross_entropy)*100.0
 
 
-ROOT_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), '..','..','..'))
+ROOT_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__),'..' ,'..','..','..'))
 try: 
     with open(os.path.join(ROOT_DIR,'config.yaml'),'r') as file:
         config = yaml.safe_load(file)
@@ -47,10 +46,9 @@ model_save_path = config['files']['model_save_path']
 
 if __name__ == "__main__":
     ######## Load data
-    train_path = list(sorted(glob.glob(f'{save_data_path}/train/stage2/train/*.parquet')))
-    valid_path = list(sorted(glob.glob(f'{save_data_path}/train/stage2/valid/*.parquet')))
-    
-    valid = pd.read_parquet(f'{save_data_path}/train/stage2/valid/')    
+    train_path = list(sorted(glob.glob(f'{save_data_path}/stage2_train2/*.parquet')))
+    valid_path = list(sorted(glob.glob(f'{save_data_path}/stage2_valid2/*.parquet')))
+    valid = pd.read_parquet(f'{save_data_path}/stage2_valid2/')   
 
     if DEBUG:
         model_save_path = f"{model_save_path}/test/"
@@ -84,12 +82,12 @@ if __name__ == "__main__":
 
     params_rely = { 
             'max_depth':6, 
-            'learning_rate':0.1, 
+        'learning_rate':0.1, 
             'subsample':0.95,
             'colsample_bytree':0.9, 
-            'eval_metric':'logloss',
-            'objective':'binary:logistic',
-            'tree_method':'hist',
+        'eval_metric':'logloss',
+        'objective':'binary:logistic',
+        'tree_method':'hist',
             "random_state":42,
             "gamma":1,
             "min_child_weight":0.761904418,
@@ -97,7 +95,7 @@ if __name__ == "__main__":
             "lambda":0.552969427,
             "alpha":9.939233487,
             "scale_pos_weight":0.944868181
-        }
+    }
 
     params_retweet = { 
             'max_depth':6, 
@@ -181,7 +179,7 @@ if __name__ == "__main__":
         model = train(paramss[numlabel], 
                 dtrain=dtrain,
                 evals=[(dtrain,'train'),(dvalid,'valid')],
-                num_boost_round=3000,
+                num_boost_round=500,
                 early_stopping_rounds=25,
                 #maximize=True,
                 verbose_eval=25,
@@ -198,9 +196,8 @@ if __name__ == "__main__":
                 # ignore=["total_amount"],  # Optional list of columns to ignore
                 filetype=RayFileType.PARQUET)
 
-
         start = time.time()
-        oof[:, numlabel] = predict(model, dvalid,  ray_params=RayParams(num_actors=num_actors))
+        oof[:, numlabel] = predict(model, dvalid,  ray_params=ray_params)
         print("prediction took %.1f seconds" % ((time.time()-start)))
 
     ######## Evaluate the performance

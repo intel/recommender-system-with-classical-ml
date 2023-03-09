@@ -1,25 +1,31 @@
-#!/env/bin/python
-
-import pyrecdp
-import gc,time,os
-import findspark
-findspark.init()
-import pandas as pd
+import ray
 import numpy as np
-from pyspark.sql import *
-from pyspark import *
-import pyspark.sql.functions as f
-import pyspark.sql.types as t
-from timeit import default_timer as timer
-import logging
+# XGBoost on ray is needed to run this example.
+# Please refer to https://docs.ray.io/en/latest/xgboost-ray.html to install it.
+from xgboost_ray import RayDMatrix, train, RayParams, predict, RayShardingMode
+from sklearn.metrics import log_loss, average_precision_score
+import raydp
+import pyrecdp 
+import gc,time,os
 from RecsysSchema import RecsysSchema
 from pyrecdp.data_processor import *
 from pyrecdp.encoder import *
 from pyrecdp.utils import *
+from features import *
 import hashlib
-import re
-import os
 
+very_start = time.time()
+
+XGB_PARAMS = { 
+'max_depth':8, 
+'learning_rate':0.1, 
+'subsample':0.8,
+'colsample_bytree':0.8, 
+'eval_metric':'logloss',
+'objective':'binary:logistic',
+'tree_method':'hist',
+"random_state":42
+}
 
 target_list = [
     'reply_timestamp',
@@ -847,6 +853,8 @@ def valid_mergeFeatures(df, te_test_dfs, y_mean_all_df, proc, output_name, mode,
         print("valid_mergeFeatures for stage2 took %.3f" % (t2 - t1))
     else:
         raise NotImplementedError("mode need to be stage1 or stage2")
+    
+    return df 
 
 def inference_mergeFeatures(df, dict_dfs, ce_test_dfs,te_test_dfs, te_test_dfs_stage2, y_mean_all_df, y_mean_all_df_stage2, proc, output_name):
     ################ categorify test data with train generated dictionary
@@ -965,267 +973,424 @@ def split_valid_byindex(df, proc, train_output, test_output):
     return (proc.spark.read.parquet(proc.path_prefix + proc.current_path + train_output),
             proc.spark.read.parquet(proc.path_prefix + proc.current_path + test_output))
 
+
 def setup_local(path_prefix,current_path,dicts_folder):
-    recsysSchema = RecsysSchema()
 
-    ##### 1. Start spark and initialize data processor #####
-    recdp_path = pyrecdp.__path__[0]
-    # scala_udf_jars = recdp_path + "/ScalaProcessUtils/built/30/recdp-scala-extensions-0.1.0-jar-with-dependencies.jar"
-    scala_udf_jars = recdp_path + "/ScalaProcessUtils/target/recdp-scala-extensions-0.1.0-jar-with-dependencies.jar"
+        recsysSchema = RecsysSchema()
+        recdp_path = pyrecdp.__path__[0]
+        scala_udf_jars = recdp_path + "/ScalaProcessUtils/target/recdp-scala-extensions-0.1.0-jar-with-dependencies.jar"
 
-    t0 = timer()
-    spark = SparkSession.builder.master('local[56]')\
-        .appName("Recsys2021_data_process")\
-        .config("spark.driver.memory", '300g')\
-        .config("spark.local.dir", "/mnt/tmp/spark")\
-        .config("spark.sql.broadcastTimeout", "7200")\
-        .config("spark.cleaner.periodicGC.interval", "15min")\
-        .config("spark.executorEnv.HF_DATASETS_OFFLINE", "1")\
-        .config("spark.executorEnv.TRANSFORMERS_OFFLINE", "1")\
-        .config("spark.driver.extraClassPath", f"{scala_udf_jars}")\
-        .config("spark.executor.extraClassPath", f"{scala_udf_jars}")\
-        .config("spark.sql.adaptive.enabled", True)\
-        .config("spark.driver.maxResultSize","16g")\
-        .config("spark.sql.codegen.maxFields", 300)\
-        .config("spark.sql.debug.maxToStringFields", 10000)\
-        .getOrCreate()
+        num_executors = 8
+        cores_per_executor = 16
+        memory_per_executor = "60G"
 
-    schema = recsysSchema.toStructType()
+        ## Initialize Spark Session 
+        spark = raydp.init_spark(app_name="Recsys2021_data_process", num_executors=num_executors, executor_cores=cores_per_executor, executor_memory=memory_per_executor,
+                        configs={"spark.driver.extraClassPath": f"{scala_udf_jars}",
+                                "spark.executor.extraClassPath": f"{scala_udf_jars}",
+                                "spark.cleaner.periodicGC.interval": "15min",
+                                "spark.driver.memory": "300g",
+                                "spark.driver.maxResultSize": "16g",
+                                "spark.local.dir": "/mnt/tmp/spark",
+                                "spark.sql.broadcastTimeout": "7200",
+                                "spark.executorEnv.HF_DATASETS_OFFLINE": "1",
+                                "spark.executorEnv.TRANSFORMERS_OFFLINE": "1",
+                                "spark.sql.adaptive.enabled": "True",
+                                "spark.sql.codegen.maxFields": "300",
+                                "spark.sql.debug.maxToStringFields": "10000",
+                                "spark.sql.execution.arrow.pyspark.enabled": "True"
+                                })
 
-    proc = DataProcessor(spark, path_prefix,
+        schema = recsysSchema.toStructType()
+
+        proc = DataProcessor(spark, path_prefix,
                         current_path=current_path, dicts_path=dicts_folder, shuffle_disk_capacity="1500GB", spark_mode='local')
-    
-    return spark, schema, proc
+
+        return spark, schema, proc 
+
 
 def setup_standalone(path_prefix,current_path,dicts_folder):
-    recsysSchema = RecsysSchema()
-
-    ##### 1. Start spark and initialize data processor #####
-    recdp_path = pyrecdp.__path__[0]
-    # scala_udf_jars = recdp_path + "/ScalaProcessUtils/built/30/recdp-scala-extensions-0.1.0-jar-with-dependencies.jar"
-    scala_udf_jars = recdp_path + "/ScalaProcessUtils/target/recdp-scala-extensions-0.1.0-jar-with-dependencies.jar"
-    spark = SparkSession.builder.master(f'spark://{MASTER}:7077')\
-        .appName("Recsys2021_data_process")\
-        .config("spark.driver.memory", '30g')\
-        .config("spark.local.dir", "/mnt/tmp/spark")\
-        .config("spark.sql.broadcastTimeout", "7200")\
-        .config("spark.cleaner.periodicGC.interval", "15min")\
-        .config("spark.executorEnv.HF_DATASETS_OFFLINE", "1")\
-        .config("spark.executorEnv.TRANSFORMERS_OFFLINE", "1")\
-        .config("spark.executor.memory", "200g")\
-        .config("spark.executor.memoryOverhead", "20g")\
-        .config("spark.executor.cores", "40")\
-        .config("spark.executor.instances","4")\
-        .config("spark.driver.extraClassPath", f"{scala_udf_jars}")\
-        .config("spark.executor.extraClassPath", f"{scala_udf_jars}")\
-        .config("spark.sql.adaptive.enabled", True)\
-        .config("spark.driver.maxResultSize","16g")\
-        .config("spark.sql.codegen.maxFields", 300)\
-        .getOrCreate()
+        recsysSchema = RecsysSchema()
         
-    schema = recsysSchema.toStructType()
+        recdp_path = pyrecdp.__path__[0]
+        
+        scala_udf_jars = recdp_path + "/ScalaProcessUtils/target/recdp-scala-extensions-0.1.0-jar-with-dependencies.jar"
+        #320
+        num_executors = 4
+        cores_per_executor = 40
+        memory_per_executor = "200G"
 
-    proc = DataProcessor(spark, path_prefix,
-                        current_path=current_path, dicts_path=dicts_folder, shuffle_disk_capacity="1500GB",spark_mode='standalone')
+        ## Initialize Spark Session 
+        spark = raydp.init_spark(app_name="Recsys2021_data_process", num_executors=num_executors, executor_cores=cores_per_executor, executor_memory=memory_per_executor,
+                        configs={"spark.driver.extraClassPath": f"{scala_udf_jars}",
+                                "spark.executor.extraClassPath": f"{scala_udf_jars}",
+                                "spark.cleaner.periodicGC.interval": "15min",
+                                "spark.driver.memory": "60g",
+                                "spark.driver.maxResultSize": "16g",
+                                "spark.local.dir": "/mnt/tmp/spark",
+                                "spark.sql.broadcastTimeout": "7200",
+                                "spark.executorEnv.HF_DATASETS_OFFLINE": "1",
+                                "spark.executorEnv.TRANSFORMERS_OFFLINE": "1",
+                                "spark.sql.adaptive.enabled": "True",
+                                "spark.sql.codegen.maxFields": "300",
+                                "spark.sql.debug.maxToStringFields": "10000",
+                                "spark.executor.memoryOverhead": "20g",
+                                "spark.sql.execution.arrow.pyspark.enabled": "True"
+                               })
+        
+        schema = recsysSchema.toStructType()
+
+        proc = DataProcessor(spark, path_prefix,
+                                current_path=current_path, dicts_path=dicts_folder, shuffle_disk_capacity="1500GB",spark_mode='standalone')
     
-    return spark, schema,proc
+        return spark, schema,proc
 
-def train():
-    ############# set up
-    path_prefix = f"hdfs://{MASTER}:9000/"
-    current_path = "/recsys2021/datapre_stage1/"
-    original_folder = "/recsys2021/oridata/train/"
-    dicts_folder = "recsys_dicts/"
 
-    #spark, schema, proc = setup_local(path_prefix,current_path,dicts_folder)
-    spark, schema, proc = setup_standalone(path_prefix,current_path,dicts_folder)
+def read_train_data(data_path, spark):
 
-    ############# load data
-    t1 = timer()
-    df = spark.read.parquet(path_prefix + original_folder)
-    t2 = timer()
-    print("Reading Data took %.3f" % (t2 - t1))
-    df = df.withColumnRenamed('enaging_user_following_count', 'engaging_user_following_count')
-    df = df.withColumnRenamed('enaging_user_is_verified', 'engaging_user_is_verified')
-    df = df.drop("tokens")
-    gc.collect()
-    print("data loaded!")
+        df = spark.read.parquet(data_path)
+        df = df.withColumnRenamed('enaging_user_following_count', 'engaging_user_following_count')
+        df = df.withColumnRenamed('enaging_user_is_verified', 'engaging_user_is_verified')
+        df = df.drop("tokens")
+        df = df.withColumn("fold", f.round(f.rand(seed=42)*(5-1)).cast("int"))
+        gc.collect()
+        print("data loaded!")
 
-    # df.sample(0.0001).write.format("parquet").mode("overwrite").save(path_prefix+"%s/train1_sample" % current_path)
-    # df = spark.read.parquet(path_prefix+"%s/train1_sample" % current_path)
-    # print("data sampled!")
+        return df 
 
-    ############# decode data
-    df = df.withColumn("fold", f.round(f.rand(seed=42)*(5-1)).cast("int"))
-    df = decodeBertTokenizerAndExtractFeatures(df, proc, output_name="train1_decode")
-    print("data decoded!")
 
-    # df = spark.read.parquet(path_prefix+"%s/train1_decode" % current_path)
+def read_valid_data_stage1(valid_data_path, index_data_path, spark):
+        
+        recsysSchema = RecsysSchema()
+        schema = recsysSchema.toStructType()
 
-    ############# categorify data
-    df, dict_dfs = categorifyFeatures(df, proc, output_name="train2_categorify", gen_dict=True)
-    print("data categorified!")
+        df = spark.read.schema(schema).option('sep', '\x01').csv(valid_data_path)
+        df_index = spark.read.parquet(index_data_path).select(["tweet_id","engaging_user_id","is_train"])
 
-    # df = spark.read.parquet(path_prefix+"%s/train2_categorify" % current_path)
+        df = df.join(df_index,["tweet_id","engaging_user_id"],"left")
+        del df_index
+        gc.collect()
+        print("data loaded!")
 
-    ############# target encoding
-    te_train_dfs, te_test_dfs, y_mean_all_df = TargetEncodingFeatures(df, proc, gen_dict=True, mode="stage1")
-    print("data encoded!")
+        return df 
 
-    ############# select sample data for training
-    print("before select:", df.count())
-    df = split_train(df, proc, output_name="train3_select", sample_ratio=0.083)
-    print("after select:", df.count())
-    print("data selected!")
 
-    # df = spark.read.parquet(path_prefix+"%s/train3_select" % current_path)
-    # _, te_train_dfs, y_mean_all_df = getTargetEncodingFeaturesDicts(proc, mode='stage1')
+def read_valid_data_stage2(data_path, spark):
 
-    ############# merge target encoding only for selected data
-    df = mergeTargetEncodingFeatures(df, te_train_dfs, proc, output_name="stage1_train",mode="stage1")
-    print("data merged!")
+        df = spark.read.parquet(data_path)
+        print("data loaded!")
 
-def valid_stage1():
-    ############# set up
-    path_prefix = f"hdfs://{MASTER}:9000/"
-    current_path = "/recsys2021/datapre_stage1/"
-    original_folder = "/recsys2021/oridata/valid/valid"
-    original_index = '/recsys2021/oridata/valid/valid_split_index.parquet'
-    dicts_folder = "recsys_dicts/"
+        return df
 
-    #spark, schema, proc = setup_local(path_prefix,current_path,dicts_folder)
-    spark, schema, proc = setup_standalone(path_prefix,current_path,dicts_folder)
 
-    ############# load data
-    df = spark.read.schema(schema).option('sep', '\x01').csv(path_prefix + original_folder)
-    df_index = proc.spark.read.parquet(proc.path_prefix+original_index).select(["tweet_id","engaging_user_id","is_train"])
-    df = df.join(df_index,["tweet_id","engaging_user_id"],"left")
-    del df_index
-    gc.collect()
-    print("data loaded!")
+def process_train_data(df, proc):
 
-    # df.sample(0.001).write.format("parquet").mode("overwrite").save(path_prefix+"%s/valid1_sample" % current_path)
-    # df = spark.read.parquet(path_prefix+"%s/valid1_sample" % current_path)
-    # print("data sampled!")
+        df = decodeBertTokenizerAndExtractFeatures(df, proc, output_name="train1_decode")
+        print("data decoded!")
 
-    ############# decode data
-    df = decodeBertTokenizerAndExtractFeatures(df, proc, output_name="valid1_decode")
-    print("data decoded!")
+        df, dict_dfs = categorifyFeatures(df, proc, output_name="train2_categorify", gen_dict=True)
+        print("data categorified!")
 
-    ############# merge target encoding dict from train
-    dict_names = ['tweet', 'mention']
-    dict_dfs = [{'col_name': name, 'dict': spark.read.parquet(
-        "%s/%s/%s/%s" % (proc.path_prefix, proc.current_path, proc.dicts_path, name))} for name in dict_names]
-    _, te_test_dfs, y_mean_all_df = getTargetEncodingFeaturesDicts(proc,mode='stage1')
+        te_train_dfs, te_test_dfs, y_mean_all_df = TargetEncodingFeatures(df, proc, gen_dict=True, mode="stage1")
+        print("data encoded!")
 
-    val_df = valid_mergeFeatures(df, te_test_dfs, y_mean_all_df, proc, output_name="stage1_valid",mode="stage1", dict_dfs=dict_dfs)
-    print("val data merged!")
+        print("before select:", df.count())
+        df = split_train(df, proc, output_name="train3_select", sample_ratio=0.083)
+        print("after select:", df.count())
+        print("data selected!")
 
-def valid_stage2():
-    ############# set up
-    path_prefix = f"hdfs://{MASTER}:9000/"
-    current_path = "/recsys2021/datapre_stage2/"
-    original_folder = "/recsys2021/oridata/valid/valid"
-    dicts_folder = "recsys_dicts/"
+        df = mergeTargetEncodingFeatures(df, te_train_dfs, proc, output_name="stage1_train", mode="stage1")
+        print("data merged!")
 
-    #spark, schema, proc = setup_local(path_prefix,current_path,dicts_folder)
-    spark, schema, proc = setup_standalone(path_prefix,current_path,dicts_folder)
+        return df 
 
-    ############# load data
-    df = spark.read.parquet(path_prefix+"/recsys2021/datapre_stage1/stage1_valid_all")
-    print("data loaded!")
 
-    ############# count encoding
-    ce_train_dfs, ce_test_dfs = CountEncodingFeatures(df, proc, gen_dict=True,mode="stage2")
-    print("count encoded!")
+def process_valid_data_stage1(df, proc):
 
-    df = mergeCountEncodingFeatures(df, ce_train_dfs, proc, output_name = "valid1_withCE")
-    print("count encoding merged!")
+        df = decodeBertTokenizerAndExtractFeatures(df, proc, output_name="valid1_decode")
+        print("data decoded!")
 
-    ############# split into train and valid
-    print("Before split:", df.count())
-    df_train, df_valid = split_valid_byindex(df, proc, train_output="valid2_train", test_output="valid2_valid")
-    print("after split, train:", df_train.count())
-    print("after split, valid:", df_valid.count())
-    print("split done!")
+        dict_names = ['tweet', 'mention']
+        dict_dfs = [{'col_name': name, 'dict': spark.read.parquet(
+                        "%s/%s/%s/%s" % (proc.path_prefix, proc.current_path, proc.dicts_path, name))} for name in dict_names]
+        _, te_test_dfs, y_mean_all_df = getTargetEncodingFeaturesDicts(proc,mode='stage1')
 
-    ############# target encoding of train data
-    numFolds = 5
-    df_train = df_train.withColumn("fold", f.round(f.rand(seed=42)*(numFolds-1)).cast("int"))
-    te_train_dfs, te_test_dfs, y_mean_all_df = TargetEncodingFeatures(df_train, proc, gen_dict=True, mode = 'stage2')
-    print("target encoded!")
+        val_df = valid_mergeFeatures(df, te_test_dfs, y_mean_all_df, proc, output_name="stage1_valid",mode="stage1", dict_dfs=dict_dfs)
+        print("val data merged!")
 
-    df_train = mergeTargetEncodingFeatures(df_train, te_train_dfs, proc, output_name='stage2_train', mode='stage2')
-    print("train target encoding merged!")
+        return val_df 
 
-    ############# merge target encoding dict for valid data
-    df_valid = valid_mergeFeatures(df_valid, te_test_dfs, y_mean_all_df, proc, output_name="stage2_valid",mode='stage2')
-    print("val data merged!")
 
-def inference_decoder():
-    ############# set up
-    path_prefix = f"hdfs://{MASTER}:9000/"
-    current_path = "/recsys2021/datapre_stage1/"
-    original_folder = "/recsys2021/oridata/test/"
-    dicts_folder = "recsys_dicts/"
+def process_valid_data_stage2(df, proc):
 
-    #spark, schema, proc = setup_local(path_prefix,current_path,dicts_folder)
-    spark, schema, proc = setup_standalone(path_prefix,current_path,dicts_folder)
-    
-    #############  load data
-    df = spark.read.schema(schema).option('sep', '\x01').csv(path_prefix + original_folder)
-    df = df.fillna(0,["reply_timestamp","retweet_timestamp","retweet_with_comment_timestamp","like_timestamp"])
-    print("data loaded!")
+        ce_train_dfs, ce_test_dfs = CountEncodingFeatures(df, proc, gen_dict=True, mode="stage2")
+        print("count encoded!")
 
-    #############  decode data
-    df = decodeBertTokenizerAndExtractFeatures(df, proc, output_name="test1_decode")
-    print("data decoded!")
+        df = mergeCountEncodingFeatures(df, ce_train_dfs, proc, output_name = "valid1_withCE")
+        print("count encoding merged!")
 
-def inference_join():
-    ############# set up
-    path_prefix = f"hdfs://{MASTER}:9000/"
-    current_path = "/recsys2021/datapre_stage1/"
-    original_folder = "/recsys2021/oridata/test/"
-    dicts_folder = "recsys_dicts/"
+        print("Before split:", df.count())
+        df_train, df_valid = split_valid_byindex(df, proc, train_output="valid2_train", test_output="valid2_valid")
+        print("after split, train:", df_train.count())
+        print("after split, valid:", df_valid.count())
+        print("split done!")
 
-    spark, schema, proc = setup_local(path_prefix,current_path,dicts_folder)
-    
-    #############  load decoder data
-    df = spark.read.parquet(path_prefix+current_path+"test1_decode")
-    print("data decoded!")
+        numFolds = 5
+        df_train = df_train.withColumn("fold", f.round(f.rand(seed=42)*(numFolds-1)).cast("int"))
+        te_train_dfs, te_test_dfs, y_mean_all_df = TargetEncodingFeatures(df_train, proc, gen_dict=True, mode = 'stage2')
+        print("target encoded!")
 
-    ############# load dict from stage 1
-    dict_names = ['tweet', 'mention']
-    dict_dfs = [{'col_name': name, 'dict': spark.read.parquet(
-        "%s/%s/%s/%s" % (proc.path_prefix, proc.current_path, proc.dicts_path, name))} for name in dict_names]
-    _, te_test_dfs, y_mean_all_df = getTargetEncodingFeaturesDicts(proc, mode='stage1', train_dict_load=False)
-    
-    ############# set up to stage 2
-    current_path = "/recsys2021/datapre_stage2/"
-    proc = DataProcessor(spark, path_prefix,
-                        current_path=current_path, dicts_path=dicts_folder, shuffle_disk_capacity="1500GB",spark_mode='local')
-    
-    ############# count encoding
-    ce_test_dfs = CountEncodingFeatures(df, proc, gen_dict=True,mode="inference",train_generate=False)
-    
-    ############# load dict from stage 2
-    _, te_test_dfs_stage2, y_mean_all_df_stage2 = getTargetEncodingFeaturesDicts(proc, mode = 'stage2', train_dict_load=False)
+        df_train = mergeTargetEncodingFeatures(df_train, te_train_dfs, proc, output_name='stage2_train', mode='stage2')
+        print("train target encoding merged!")
 
-    ############# final merge
-    df = inference_mergeFeatures(df, dict_dfs, ce_test_dfs,te_test_dfs, te_test_dfs_stage2, y_mean_all_df, y_mean_all_df_stage2, proc, output_name="stage12_test")
+        df_valid = valid_mergeFeatures(df_valid, te_test_dfs, y_mean_all_df, proc, output_name="stage2_valid",mode='stage2')
+        print("val data merged!")
+
+        return (df_train, df_valid)   
+
+
+def compute_AP(pred, gt):
+    return average_precision_score(gt, pred)
+
+
+def compute_rce_fast(pred, gt):
+    cross_entropy = log_loss(gt, pred)
+    yt = np.mean(gt)     
+    strawman_cross_entropy = -(yt*np.log(yt) + (1 - yt)*np.log(1 - yt))
+    return (1.0 - cross_entropy/strawman_cross_entropy)*100.0
+
+
+def evaluate_results(oof, valid, label_names):
+        print('#'*25);print('###','Evalution Results');print('#'*25)
+        txts = ''
+        sumap = 0
+        sumrce = 0
+        for i in range(4):
+                ap = compute_AP(oof[:,i],valid[label_names[i]].values)
+                rce = compute_rce_fast(oof[:,i],valid[label_names[i]].values)
+                txt = f"{label_names[i]:20} AP:{ap:.5f} RCE:{rce:.5f}"
+                print(txt)
+
+                txts += "%.4f" % ap + ' '
+                txts += "%.4f" % rce + ' '
+                sumap += ap
+                sumrce += rce
+        print(txts)
+        print("AVG AP: ", sumap/4.)
+        print("AVG RCE: ", sumrce/4.)
+        
+
+def stage1_training(ray_train_df1, ray_valid_df1, model_save_path, ray_params):
+
+        label_names = ['reply_timestamp', 'retweet_timestamp', 'retweet_with_comment_timestamp', 'like_timestamp']
+        feature_list = []
+        feature_list.append(stage1_reply_features)
+        feature_list.append(stage1_retweet_features)
+        feature_list.append(stage1_comment_features)
+        feature_list.append(stage1_like_features)
+        for i in range(4):
+                print(len(feature_list[i])-1)
+
+        oof = np.zeros((ray_valid_df1.count(),len(label_names)))
+
+        for numlabel in range(4):
+                name = label_names[numlabel]
+                print('#'*25);print('###',name);print('#'*25)
+
+                start = time.time()
+                dtrain = RayDMatrix(ray_train_df1.select_columns(cols=feature_list[numlabel]), label=name)
+                dvalid = RayDMatrix(ray_valid_df1.select_columns(cols=feature_list[numlabel]), label=name)
+                print("prepare matrix took %.1f seconds" % ((time.time()-start)))
+
+                print("Training.....")
+
+                model = train(
+                        XGB_PARAMS,
+                        dtrain,
+                        evals=[(dtrain, "train"), (dvalid, "eval")],
+                        num_boost_round=500,
+                        early_stopping_rounds=25,
+                        verbose_eval=25,
+                        ray_params=ray_params
+                        )
+                
+                model.save_model(f"{model_save_path}/xgboost_{name}_stage1.model")
+
+                dvalid = RayDMatrix(
+                                ray_valid_df1.select_columns(cols=feature_list[numlabel]),
+                                label=name,  # Will select this column as the label
+                                sharding=RayShardingMode.BATCH
+                                )
+
+                oof[:, numlabel] = predict(model, dvalid, ray_params=ray_params)
+        
+        valid = ray_valid_df1.select_columns(cols=["tweet_id","engaging_user_id"]).to_pandas(limit=14461760)
+        gt = ray_valid_df1.select_columns(cols=label_names).to_pandas(limit=14461760)
+
+        for i in range(4):
+                valid[f"pred_{label_names[i]}"] = oof[:,i]
+        
+        evaluate_results(oof, gt, label_names)
+
+        return valid 
+
+
+def data_merge(df1, df2, preds, data_path):
+
+        index_cols = ['tweet_id', 'engaging_user_id']
+        df1 = df1.merge(preds, on=index_cols, how="left")
+        df2 = df2.merge(preds, on=index_cols, how="left")
+
+        df1.to_parquet(f"{data_path}/stage2_train_pred.parquet")
+        df2.to_parquet(f"{data_path}/stage2_valid_pred.parquet")
+        return df1, df2 
+
+
+def stage2_training(ray_train_df2, ray_valid_df2, model_save_path, ray_params):
+        
+        label_names = ['reply_timestamp', 'retweet_timestamp', 'retweet_with_comment_timestamp', 'like_timestamp']
+        feature_list = []
+        feature_list.append(stage2_reply_features)
+        feature_list.append(stage2_retweet_features)
+        feature_list.append(stage2_comment_features)
+        feature_list.append(stage2_like_features)
+        for i in range(4):
+                print(len(feature_list[i])-1)
+
+        oof = np.zeros((ray_valid_df2.count(),len(label_names)))
+
+        for numlabel in range(4):
+                name = label_names[numlabel]
+                print('#'*25);print('###',name);print('#'*25)
+
+                start = time.time()
+                dtrain = RayDMatrix(ray_train_df2.select_columns(cols=feature_list[numlabel]), label=name)
+                dvalid = RayDMatrix(ray_valid_df2.select_columns(cols=feature_list[numlabel]), label=name)
+                print("prepare matrix took %.1f seconds" % ((time.time()-start)))
+
+                print("Training.....")
+                
+                model = train(
+                        XGB_PARAMS,
+                        dtrain,
+                        evals=[(dtrain, "train"), (dvalid, "eval")],
+                        num_boost_round=500,
+                        early_stopping_rounds=25,
+                        verbose_eval=25,
+                        ray_params=ray_params
+                        )
+                
+                model.save_model(f"{model_save_path}/xgboost_{name}_stage2.model")
+
+                dvalid = RayDMatrix(
+                                ray_valid_df2.select_columns(cols=feature_list[numlabel]),
+                                columns=feature_list[numlabel],
+                                label=name,  # Will select this column as the label
+                                sharding=RayShardingMode.BATCH
+                                )
+
+                oof[:, numlabel] = predict(model, dvalid, ray_params=ray_params)
+                
+        valid = ray_valid_df2.select_columns(cols=label_names).to_pandas(limit=14461760)
+
+        evaluate_results(oof, valid, label_names)
+
+        return None
 
 if __name__ == "__main__":
-    time1 = time.time()
-    mode = sys.argv[1]
-    MASTER = sys.argv[2]
-    if mode == "train":
-        train()
-    elif mode == "valid_stage1":
-        valid_stage1()
-    elif mode == "valid_stage2":
-        valid_stage2()
-    elif mode == "inference_decoder":
-        inference_decoder()
-    elif mode == "inference_join":
-        inference_join()
-    print(f"Took totally {time.time()-time1} seconds")
+
+        mode = sys.argv[1]
+        MASTER = sys.argv[2]
+
+        path_prefix = f"hdfs://{MASTER}:9000/"
+        current_path = "/recsys2021/datapre_stage1/"
+        train_folder = "/recsys2021/oridata/train/"
+        valid_folder = "/recsys2021/oridata/valid/valid"
+        original_index = '/recsys2021/oridata/valid/valid_split_index.parquet'
+        dicts_folder = "recsys_dicts/"
+
+        model_save_path = '/mnt/tmp/models/'
+        data_path = '/mnt/tmp/result/'
+
+        if mode == 'local':
+                ray.init(address="local", num_cpus=160, _temp_dir="/mnt/ray")
+                cpus_per_actor = 154
+                num_actors = 1
+                ray_params = RayParams(max_actor_restarts=2, num_actors=num_actors, cpus_per_actor=cpus_per_actor)
+                spark, schema, proc = setup_local(path_prefix,current_path,dicts_folder)
+        elif mode == 'standalone':
+                print("start standalone....")
+                ray.init(address='auto', _temp_dir="/mnt/ray")
+                cpus_per_actor = 15
+                num_actors = 20
+                ray_params = RayParams(num_actors=num_actors, cpus_per_actor=cpus_per_actor, elastic_training=True, max_failed_actors=1, max_actor_restarts=2)
+                spark, schema, proc = setup_standalone(path_prefix,current_path,dicts_folder)
+        else: 
+                print("cluster mode should either be local or standalone")
+
+        start = time.time()
+        train_df = read_train_data(path_prefix + train_folder, spark)
+        train_df = process_train_data(train_df, proc)
+        print("processing train data took %.1f seconds" % ((time.time()-start)))
+
+        start = time.time()
+        valid_df = read_valid_data_stage1(path_prefix + valid_folder, path_prefix+original_index, spark)
+        valid_df = process_valid_data_stage1(valid_df, proc)
+        print("processing validation data for stage1 took %.1f seconds" % ((time.time()-start)))
+
+        start = time.time()
+        proc.current_path = "/recsys2021/datapre_stage2/"
+        df = read_valid_data_stage2(path_prefix+"/recsys2021/datapre_stage1/stage1_valid_all", spark)
+        stage2_train, stage2_valid =  process_valid_data_stage2(df, proc)
+        print("processing validation data for stage2 took %.1f seconds" % ((time.time()-start)))
+
+        print("converting data....")
+        
+        # train_df = spark.read.parquet(path_prefix+'/recsys2021/datapre_stage1/stage1_train/')
+        # valid_df = spark.read.parquet(path_prefix+'/recsys2021/datapre_stage1/stage1_valid/')
+        # stage2_train = spark.read.parquet(path_prefix+'/recsys2021/datapre_stage2/stage2_train/').toPandas()
+        # stage2_valid = spark.read.parquet(path_prefix+'/recsys2021/datapre_stage2/stage2_valid/').toPandas()
+
+        start = time.time()
+        ray_train_df1 = raydp.spark.dataset.spark_dataframe_to_ray_dataset(train_df, _use_owner=True)
+        ray_valid_df1 = raydp.spark.dataset.spark_dataframe_to_ray_dataset(valid_df, _use_owner=True)
+        stage2_train = stage2_train.toPandas()
+        stage2_valid = stage2_valid.toPandas()
+        print("converting spark dataframe took %.1f seconds" % ((time.time()-start)))
+
+        print(f"({ray_train_df1.count()}, {len(ray_train_df1.take(1)[0])})")
+        print(f"({ray_valid_df1.count()}, {len(ray_valid_df1.take(1)[0])})")
+
+        print(stage2_train.shape)
+        print(stage2_valid.shape)
+
+        raydp.stop_spark(cleanup_data=False)
+
+        print("start stage1 training....")
+
+        start = time.time()
+        preds = stage1_training(ray_train_df1, ray_valid_df1, model_save_path, ray_params)
+        print("stage1 training took %.1f seconds" % ((time.time()-start)))
+
+        print("start data merging....")
+        start = time.time()
+        stage2_train, stage2_valid = data_merge(stage2_train, stage2_valid, preds, data_path)
+        print("data merging took %.1f seconds" % ((time.time()-start)))
+        
+        print("converting from padnas to ray dataset....")
+        ray_stage2_train = ray.data.from_pandas(stage2_train).repartition(20)
+        ray_stage2_valid = ray.data.from_pandas(stage2_valid).repartition(20)
+        print("converting data types took %.1f seconds" % ((time.time()-start)))
+
+        print("start stage2 training....")
+        start = time.time()
+        stage2_training(ray_stage2_train, ray_stage2_valid, model_save_path, ray_params)
+        print("stage2 training took %.1f seconds" % ((time.time()-start)))
+
+        ray.shutdown()
+
+        print('This notebook took %.1f seconds'%(time.time()-very_start))
+
+
+
+

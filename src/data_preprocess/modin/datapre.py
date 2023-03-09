@@ -482,9 +482,9 @@ def decodeBertTokenizerAndExtractFeatures(df):
     ## dealing with string feature
     df["tweet"] = df["text_tokens"].apply(lambda x: tokenizer.decode([int(n) for n in x.split('\t')]))
     df["tweet"] = df["tweet"].apply(lambda x: x.replace('https : / / t. co / ', 'https://t.co/').replace('@ ', '@'))
-    df["tw_word0"] = df["tweet"].apply(lambda x: ret_word(x,0)).astype('int32') ##??
-    df["tw_original_user0"] = df["tweet"].apply(lambda x: extract_hash(x, no=0)) ##??
-    df["tw_original_user1"] = df["tweet"].apply(lambda x: extract_hash(x, no=1)) ##??
+    df["tw_word0"] = df["tweet"].apply(lambda x: ret_word(x,0)).astype('int32') 
+    df["tw_original_user0"] = df["tweet"].apply(lambda x: extract_hash(x, no=0)) 
+    df["tw_original_user1"] = df["tweet"].apply(lambda x: extract_hash(x, no=1))
     df['mention'] = df['tweet'].str.extract(r"[^RT]\s@(\S+)").fillna('')
     df['has_mention'] = df['mention'].apply(lambda x: 0 if x == '' else 1).astype("int32")
     
@@ -1000,9 +1000,17 @@ def train():
     create_path(path_prefix+current_path+dicts_folder+'/train')
     create_path(path_prefix+current_path+dicts_folder+'/test')
 
+    columns_to_read = ['tweet_timestamp', 'tweet_type', 'present_media', 'present_domains', 
+                              'present_links', 'engaged_with_user_is_verified', 'hashtags', 
+                              'engaged_with_user_following_count', 'language', 'engaging_user_follower_count', 
+                              'engagee_follows_engager', 'reply_timestamp', 'engaged_with_user_follower_count', 
+                              'engaged_with_user_account_creation', 'enaging_user_is_verified', 
+                              'enaging_user_following_count', 'engaging_user_account_creation', 
+                              'retweet_with_comment_timestamp', 'like_timestamp', 'retweet_timestamp', 
+                              'tweet_id', 'engaged_with_user_id', 'engaging_user_id', 'text_tokens']
     ############# load data
     t1 = timer()
-    df = pd.read_parquet(path_prefix+original_folder)
+    df = pd.read_parquet(path_prefix+original_folder, columns=columns_to_read)
     t2 = timer()
     print("Reading Data took %.3f" % (t2 - t1))
 
@@ -1013,7 +1021,6 @@ def train():
             return name
 
     df.rename(columns=fix_typo, inplace=True)
-    df.drop(columns="tokens", inplace=True)
     print('data loaded!')
 
     ############# decode data
@@ -1180,9 +1187,9 @@ if __name__ == "__main__":
     cluster_mode = sys.argv[2]
 
     if cluster_mode == 'local':
-        ray.init(runtime_env={'env_vars': {'__MODIN_AUTOIMPORT_PANDAS__': '1'}})
+        ray.init(runtime_env={'env_vars': {'__MODIN_AUTOIMPORT_PANDAS__': '1'}}, log_to_driver=False, _temp_dir='/mnt/ray')
     else:
-        ray.init(address="auto", runtime_env={'env_vars': {'__MODIN_AUTOIMPORT_PANDAS__': '1'}}, _temp_dir='/mnt/data/ray_tmp')
+        ray.init(address="auto", runtime_env={'env_vars': {'__MODIN_AUTOIMPORT_PANDAS__': '1'}}, _temp_dir='/mnt/ray')
 
     if train_mode == "train":
         train()

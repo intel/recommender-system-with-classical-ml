@@ -1,9 +1,9 @@
-FROM python:3.8-buster
-  
+FROM python:3.10-buster
+
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y update && \
-    DEBIAN_FRONTEND=noninteractive apt-get -y install --no-install-recommends openssh-server ssh wget vim net-tools git-all && \
+    DEBIAN_FRONTEND=noninteractive apt-get -y install --no-install-recommends openssh-server wget vim net-tools git-all htop && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
- 
+
 # install java
 RUN wget --no-check-certificate -q https://repo.huaweicloud.com/java/jdk/8u201-b09/jdk-8u201-linux-x64.tar.gz && \
     tar -zxvf jdk-8u201-linux-x64.tar.gz && \
@@ -16,16 +16,16 @@ RUN wget --no-check-certificate -q https://dlcdn.apache.org/hadoop/common/hadoop
     mv hadoop-3.3.3 /opt/hadoop-3.3.3 && \
     rm hadoop-3.3.3.tar.gz
  
-# install spark 3.3.0
-RUN wget --no-check-certificate -q https://dlcdn.apache.org/spark/spark-3.3.0/spark-3.3.0-bin-hadoop3.tgz && \
-    tar -zxvf spark-3.3.0-bin-hadoop3.tgz && \
-    mv spark-3.3.0-bin-hadoop3 /opt/spark-3.3.0-bin-hadoop3 && \
-    rm spark-3.3.0-bin-hadoop3.tgz
+# install spark 3.3.1
+RUN wget --no-check-certificate https://archive.apache.org/dist/spark/spark-3.3.1/spark-3.3.1-bin-hadoop3.tgz && \
+    tar -zxvf spark-3.3.1-bin-hadoop3.tgz && \
+    mv spark-3.3.1-bin-hadoop3 /opt/spark-3.3.1-bin-hadoop3 && \
+    rm spark-3.3.1-bin-hadoop3.tgz
  
 ENV HADOOP_HOME=/opt/hadoop-3.3.3
 ENV JAVA_HOME=/opt/jdk1.8.0_201
 ENV JRE_HOME=$JAVA_HOME/jre
-ENV SPARK_HOME=/opt/spark-3.3.0-bin-hadoop3
+ENV SPARK_HOME=/opt/spark-3.3.1-bin-hadoop3
 ENV PYSPARK_PYTHON=/usr/local/bin/python
 ENV PATH=$PATH:$JAVA_HOME/bin:$HADOOP_HOME/bin:$HADOOP_HOME/sbin:$SPARK_HOME/bin
 ENV PYTHONPATH=$SPARK_HOME/python:$SPARK_HOME/python/lib/py4j-0.10.9-src.zip:$PYTHONPATH
@@ -38,5 +38,9 @@ RUN ssh-keygen -t rsa -f /root/.ssh/id_rsa -P '' && \
     sed -i 's/#   Port 22/Port 12345/' /etc/ssh/ssh_config && \
     sed -i 's/#Port 22/Port 12345/' /etc/ssh/sshd_config
 
-RUN pip install --no-cache-dir pyarrow findspark numpy pandas transformers torch pyrecdp sklearn xgboost
+RUN pip install --no-cache-dir pyarrow findspark numpy pandas transformers torch pyrecdp scikit-learn category_encoders ray==2.2.0 xgboost xgboost-ray optuna sigopt pyyaml raydp
+RUN pip install "modin[ray] @ git+https://github.com/dchigarev/modin@fraud_detection_target_enc" 
+
+WORKDIR /workspace
+
 CMD ["sh", "-c", "service ssh start; bash"]

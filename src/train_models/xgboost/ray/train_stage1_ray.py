@@ -16,7 +16,7 @@ import ray
 ray.init(address="auto")
 cpus_per_actor = 15
 num_actors = 20
-ray_params = RayParams(num_actors=num_actors, cpus_per_actor=cpus_per_actor, elastic_training=True, max_failed_actors=1, max_actor_restarts=1)
+ray_params = RayParams(num_actors=num_actors, cpus_per_actor=cpus_per_actor, elastic_training=True, max_failed_actors=1, max_actor_restarts=2)
 
 very_start = time.time()
 
@@ -47,7 +47,7 @@ def check_test_path(model_save_path):
         model_save_path.mkdir(parents=True)
     return None
 
-ROOT_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), '..','..','..'))
+ROOT_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), '..','..','..','..'))
 
 try: 
     with open(os.path.join(ROOT_DIR,'config.yaml'),'r') as file:
@@ -58,7 +58,6 @@ except Exception as e:
 save_data_path = config['files']['save_data_path'] 
 model_save_path = config['files']['model_save_path'] 
 pred_save_path = config['files']['pred_save_path'] 
-num_iterations = config['training']['num_iterations']
 DEBUG = config['training']['debug']
 
 if __name__ == "__main__":
@@ -76,9 +75,9 @@ if __name__ == "__main__":
         valid_path = list(sorted(glob.glob(f'{save_data_path}/train/stage1/valid/part-00000-5920f744-7273-4c28-a5f9-87ec5fff5f35-c000.snappy.parquet')))
 
     else:
-        train_path = list(sorted(glob.glob(f'{save_data_path}/train/stage1/train/*.parquet')))
-        valid_path = list(sorted(glob.glob(f'{save_data_path}/train/stage1/valid/*.parquet')))
-        valid = pd.read_parquet(f'{save_data_path}/train/stage1/valid/')  
+        train_path = list(sorted(glob.glob(f'{save_data_path}/stage1_train/*.parquet')))
+        valid_path = list(sorted(glob.glob(f'{save_data_path}/stage1_valid/*.parquet')))
+        valid = pd.read_parquet(f'{save_data_path}/stage1_valid/')  
     print(valid.shape)
 
     ######## Feature list for each target
@@ -105,12 +104,12 @@ if __name__ == "__main__":
 
     params_rely = { 
             'max_depth':10, 
-            'learning_rate':0.1, 
+        'learning_rate':0.1, 
             'subsample':0.5,
             'colsample_bytree':0.5, 
-            'eval_metric':'logloss',
-            'objective':'binary:logistic',
-            'tree_method':'hist',
+        'eval_metric':'logloss',
+        'objective':'binary:logistic',
+        'tree_method':'hist',
             "random_state":42,
             "gamma":1,
             "min_child_weight":1.426709288,
@@ -118,7 +117,7 @@ if __name__ == "__main__":
             "lambda":1.37467644,
             "alpha":5.311953964,
             "scale_pos_weight":1.163018059
-        }
+    }
 
     params_retweet = { 
             'max_depth':12, 
@@ -170,7 +169,7 @@ if __name__ == "__main__":
             "scale_pos_weight": 1.6732513973901955
         }
 
-    paramss = [params_rely,params_retweet,params_comment,params_like]
+    # paramss = [params_rely,params_retweet,params_comment,params_like]
 
     oof = np.zeros((len(valid),len(label_names)))
     for numlabel in range(4):

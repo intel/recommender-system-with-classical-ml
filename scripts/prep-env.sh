@@ -4,10 +4,10 @@ helpFunction()
 {
    echo ""
    echo "Usage: $0 -a parameterA -b parameterB -c parameterC -d parameterD"
-   echo -e "\t-a hostname of the master node, just use hadoop-master if on single-node"
-   echo -e "\t-b hostname of the worker node, just use hadoop-master if on single-node"
+   echo -e "\t-a hostname of the master node"
+   echo -e "\t-b hostname of the worker node, if single-node, this should be the same with master node"
    echo -e "\t-c whether it is a master node, 0 stands for master, 1 stands for slave"
-   echo -e "\t-d cluster mode, 0 stands for single-node and single-containers, 1 stands for single-node and 2-containers, 2 stands for multi-node"
+   echo -e "\t-d cluster mode, 0 stands for single-node and single-containers, 1 stands for multi-node"
    exit 1 # Exit script after printing help
 }
 
@@ -29,19 +29,21 @@ then
    helpFunction
 fi
 
-export MAIN=$parameterA
-export SECONDARY=$parameterB
-export SPARK_VERSION=`echo $SPARK_HOME | cut -d "-" -f 2`
+MAIN=$parameterA
+SECONDARY=$parameterB
+SPARK_VERSION=`echo $SPARK_HOME | cut -d "-" -f 2`
+HOME_DIR=$(pwd)
 
-cp /mnt/code/dep/hadoop-env.sh $HADOOP_HOME/etc/hadoop/hadoop-env.sh && \
-cp /mnt/code/dep/hdfs-site.xml $HADOOP_HOME/etc/hadoop/hdfs-site.xml && \
-cp /mnt/code/dep/core-site.xml $HADOOP_HOME/etc/hadoop/core-site.xml && \
-cp /mnt/code/dep/mapred-site.xml $HADOOP_HOME/etc/hadoop/mapred-site.xml && \
-cp /mnt/code/dep/yarn-site.xml $HADOOP_HOME/etc/hadoop/yarn-site.xml && \
-cp /mnt/code/dep/slaves $HADOOP_HOME/etc/hadoop/slaves && \
-cp /mnt/code/dep/ssh_config /root/.ssh/config && \
-cp /mnt/code/dep/spark-env.sh $SPARK_HOME/conf/spark-env.sh && \
-cp /mnt/code/dep/spark-defaults.conf $SPARK_HOME/conf/spark-defaults.conf 
+
+cp $HOME_DIR/configs/hadoop-env.sh $HADOOP_HOME/etc/hadoop/hadoop-env.sh && \
+cp $HOME_DIR/configs/hdfs-site.xml $HADOOP_HOME/etc/hadoop/hdfs-site.xml && \
+cp $HOME_DIR/configs/core-site.xml $HADOOP_HOME/etc/hadoop/core-site.xml && \
+cp $HOME_DIR/configs/mapred-site.xml $HADOOP_HOME/etc/hadoop/mapred-site.xml && \
+cp $HOME_DIR/configs/yarn-site.xml $HADOOP_HOME/etc/hadoop/yarn-site.xml && \
+cp $HOME_DIR/configs/slaves $HADOOP_HOME/etc/hadoop/slaves && \
+cp $HOME_DIR/configs/ssh_config /root/.ssh/config && \
+cp $HOME_DIR/configs/spark-env.sh $SPARK_HOME/conf/spark-env.sh && \
+cp $HOME_DIR/configs/spark-defaults.conf $SPARK_HOME/conf/spark-defaults.conf 
 
 sed -i 's@hadoop-master@'"$MAIN"'@'  $HADOOP_HOME/etc/hadoop/core-site.xml && \
 sed -i 's@hadoop-master@'"$MAIN"'@'  $HADOOP_HOME/etc/hadoop/hdfs-site.xml && \
@@ -94,40 +96,6 @@ if [[ $parameterD = "0" ]]; then
     echo -e "\n"
     
 elif [[ $parameterD = "1" ]]; then 
-    echo "Setting Up Single-Node&2-Container Version of the Spark Cluster..."
-
-    if [[ $parameterC = "0" ]]
-    then
-        echo -e "\ncoping config files to slave1..."
-        scp -r /opt/spark-3.3.0-bin-hadoop3 hadoop-slave1:/opt/
-        scp -r /opt/hadoop-3.3.3 hadoop-slave1:/opt/
-
-        echo -e "\nformat namenode..."
-        (sleep 10; echo y) | $HADOOP_HOME/bin/hdfs namenode -format
-
-        echo -e "\nstart spark..."
-        source $SPARK_HOME/conf/spark-env.sh 
-        $SPARK_HOME/sbin/start-master.sh
-
-        echo -e "\ncreate spark history folder..."
-        hdfs dfs -mkdir -p /spark/history
-
-        echo -e "\nstart spark worker..."
-        $SPARK_HOME/sbin/start-worker.sh spark://$MAIN:7077 
-
-    else 
-        echo -e "\nformat datanode..."
-        (sleep 10; echo y) | $HADOOP_HOME/bin/hdfs datanode -format
-
-        echo -e "\nstart spark master..."
-        source $SPARK_HOME/conf/spark-env.sh 
-        $SPARK_HOME/sbin/start-master.sh
-        
-        echo -e "\nstart spark worker..."
-        $SPARK_HOME/sbin/start-worker.sh spark://$MAIN:7077 
-    fi
-
-elif [[ $parameterD = "2" ]]; then 
     echo "Setting Up 2-Node&2-Container Version of the Spark Cluster..."
 
     echo "Starting Hadoop..."

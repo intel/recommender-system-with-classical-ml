@@ -2,7 +2,8 @@
 
 echo ""
 echo -e "\nbuild docker hadoop image\n"
-docker build -t recsys2021:1.0 \
+docker build -t classical-ml-wf \
+            --network host \
             --build-arg https_proxy=${https_proxy} \
             --build-arg HTTPS_PROXY=${HTTPS_PROXY} \
             --build-arg HTTP_PROXY=${HTTP_PROXY} \

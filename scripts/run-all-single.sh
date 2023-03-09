@@ -9,7 +9,7 @@ echo -e "\nload data into hdfs...."
 echo -e "\n"
 
 echo -e "\nstart data preprocessing...."
-cd /mnt/code/src/data_preprocess
+cd /mnt/code/src/data_preprocess/spark
 python datapre.py train hadoop-master
 python datapre.py valid_stage1 hadoop-master
 python datapre.py valid_stage2 hadoop-master
@@ -24,15 +24,15 @@ hdfs dfs -copyToLocal /recsys2021/datapre_stage2/stage2_valid /mnt/data/processe
 echo -e "\n"
 sleep 10
 echo -e "\nstart training stage 1...."
-python /mnt/code/src/models/xgboost/train_stage1.py --config-dir /mnt/code/config.yaml
+python /mnt/code/src/train_models/xgboost/train_stage1.py --config-dir /mnt/code/config.yaml
 echo -e "\n"
 
 echo -e "\ncreate data for stage 2...."
-python /mnt/code/src/models/xgboost/train_merge12.py --config-dir /mnt/code/config.yaml
+python /mnt/code/src/train_models/xgboost/train_merge12.py --config-dir /mnt/code/config.yaml
 echo -e "\n"
 
 echo -e "\nstart training stage 2...."
-python /mnt/code/src/models/xgboost/train_stage2.py --config-dir /mnt/code/config.yaml
+python /mnt/code/src/train_models/xgboost/train_stage2.py --config-dir /mnt/code/config.yaml
 echo -e "\n"
 
 echo -e "\nall training finished!"

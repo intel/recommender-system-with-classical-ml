@@ -8,7 +8,7 @@ import glob
 
 very_start = time.time()
 
-ROOT_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), '..','..','..'))
+ROOT_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), '..','..','..','..'))
 try: 
     with open(os.path.join(ROOT_DIR,'config.yaml'),'r') as file:
         config = yaml.safe_load(file)
@@ -26,8 +26,8 @@ if DEBUG:
 
 if __name__ == "__main__":
 
-    train_path = list(sorted(glob.glob(f'{path}/train/stage2/train/*.parquet')))
-    valid_path = list(sorted(glob.glob(f'{path}/train/stage2/valid/*.parquet')))
+    train_path = list(sorted(glob.glob(f'{path}/stage2_train/*.parquet')))
+    valid_path = list(sorted(glob.glob(f'{path}/stage2_valid/*.parquet')))
     pred_path = f"{pred_save_path}/xgboost_pred_stage1.csv"
 
     num_train = len(train_path) 
@@ -45,22 +45,25 @@ if __name__ == "__main__":
     df2 = df2.merge(preds, on=index_cols, how="left")
     print('merging files took %.1f seconds'%(time.time()-start))
 
-    for col in df2.columns:
-        if df2[col].dtype=='bool':
-            df1[col] = df1[col].astype('int8')
-            df2[col] = df2[col].astype('int8')
+    # for col in df2.columns:
+    #     if df2[col].dtype=='bool':
+    #         df1[col] = df1[col].astype('int8')
+    #         df2[col] = df2[col].astype('int8')
 
-    start = time.time()
-    train_splits = np.array_split(df1, num_train)
-    valid_splits = np.array_split(df2, num_valid)
-    print('splitting files took %.1f seconds'%(time.time()-start))
-
-    start = time.time()
-    for i, df in enumerate(train_splits):
-        df.to_parquet(f"{save_data_path}/train/stage2/train/stage2_train_pred_{i}.parquet")
+    # df1.to_parquet(f"{save_data_path}/stage2_train_pred.parquet")
+    # df2.to_parquet(f"{save_data_path}/stage2_valid_pred.parquet")
     
-    for i, df in enumerate(valid_splits):
-        df.to_parquet(f"{save_data_path}/train/stage2/valid/stage2_valid_pred_{i}.parquet")
+    # start = time.time()
+    # train_splits = np.array_split(df1, num_train)
+    # valid_splits = np.array_split(df2, num_valid)
+    # print('splitting files took %.1f seconds'%(time.time()-start))
+
+    # start = time.time()
+    # for i, df in enumerate(train_splits):
+    #     df.to_parquet(f"{save_data_path}/stage2_train2/stage2_train_pred_{i}.parquet")
+    
+    # for i, df in enumerate(valid_splits):
+    #     df.to_parquet(f"{save_data_path}/stage2_valid2/stage2_valid_pred_{i}.parquet")
     
     print('saving files took %.1f seconds'%(time.time()-start))
 

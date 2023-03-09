@@ -86,16 +86,13 @@ if __name__ == "__main__":
         'colsample_bytree':0.8, 
         'eval_metric':'logloss',
         'objective':'binary:logistic',
-        'tree_method':'auto',
+        'tree_method':'hist',
         "random_state":42
     }
 
     oof = np.zeros((len(valid),len(label_names)))
-    for numlabel in range(1):
-        evals_result = {}
-        start = time.time()
+    for numlabel in range(4):
         name = label_names[numlabel]
-        print('#'*25);print('###',name);print('#'*25)
         
         dtrain = xgb.DMatrix(data=train[feature_list[numlabel]], label=train[name])
         dvalid = xgb.DMatrix(data=valid[feature_list[numlabel]], label=valid[name])
