@@ -92,7 +92,10 @@ if __name__ == "__main__":
 
     oof = np.zeros((len(valid),len(label_names)))
     for numlabel in range(4):
+        evals_result = {}
+        start = time.time()
         name = label_names[numlabel]
+        print('#'*25);print('###',name);print('#'*25)
         
         dtrain = xgb.DMatrix(data=train[feature_list[numlabel]], label=train[name])
         dvalid = xgb.DMatrix(data=valid[feature_list[numlabel]], label=valid[name])
@@ -114,7 +117,7 @@ if __name__ == "__main__":
 
         #draw_learning_curve(evals_result, output=f'/mnt/code/{name}.png')
     ######## Merge prediction to data and save
-    for i in range(1):
+    for i in range(4):
         valid[f"pred_{label_names[i]}"] = oof[:,i]
     
     valid[["tweet_id","engaging_user_id",f"pred_{label_names[0]}",f"pred_{label_names[1]}",f"pred_{label_names[2]}",f"pred_{label_names[3]}"]].to_csv(f"{pred_save_path}/xgboost_pred_stage1.csv",index=0)
@@ -123,7 +126,7 @@ if __name__ == "__main__":
     txts = ''
     sumap = 0
     sumrce = 0
-    for i in range(1):
+    for i in range(4):
         ap = compute_AP(oof[:,i],valid[label_names[i]].values)
         rce = compute_rce_fast(oof[:,i],valid[label_names[i]].values)
         txt = f"{label_names[i]:20} AP:{ap:.5f} RCE:{rce:.5f}"

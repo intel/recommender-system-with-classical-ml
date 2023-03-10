@@ -1,7 +1,31 @@
-FROM python:3.10-buster
+FROM ubuntu:22.04 as base
 
-RUN DEBIAN_FRONTEND=noninteractive apt-get -y update && \
-    DEBIAN_FRONTEND=noninteractive apt-get -y install --no-install-recommends openssh-server wget vim net-tools git-all htop && \
+# See http://bugs.python.org/issue19846
+ENV LANG C.UTF-8
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
+
+RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
+    ca-certificates \
+    curl \
+    python3 \
+    python3-distutils \
+    python3-dev \
+    build-essential
+
+RUN curl -fSsL https://bootstrap.pypa.io/get-pip.py | python3
+
+RUN ln -sf $(which python3) /usr/local/bin/python && \
+    ln -sf $(which python3) /usr/local/bin/python3 && \
+    ln -sf $(which python3) /usr/bin/python
+
+RUN python -m pip --no-cache-dir install --upgrade \
+    pip \
+    setuptools
+
+RUN apt-get -y update && \
+    apt-get -y install --no-install-recommends openssh-server wget vim net-tools git-all htop && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # install java
