@@ -16,11 +16,11 @@ python datapre.py valid_stage2 hadoop-master
 echo -e "\n"
 sleep 10
 echo -e "\ndownload data to local...."
-mkdir /mnt/data/processed_data
-hdfs dfs -copyToLocal /recsys2021/datapre_stage1/stage1_train /mnt/data/processed_data
-hdfs dfs -copyToLocal /recsys2021/datapre_stage1/stage1_valid /mnt/data/processed_data
-hdfs dfs -copyToLocal /recsys2021/datapre_stage2/stage2_train /mnt/data/processed_data
-hdfs dfs -copyToLocal /recsys2021/datapre_stage2/stage2_valid /mnt/data/processed_data
+mkdir /workspace/data/processed_data
+hdfs dfs -copyToLocal /recsys2021/datapre_stage1/stage1_train /workspace/data/processed_data
+hdfs dfs -copyToLocal /recsys2021/datapre_stage1/stage1_valid /workspace/data/processed_data
+hdfs dfs -copyToLocal /recsys2021/datapre_stage2/stage2_train /workspace/data/processed_data
+hdfs dfs -copyToLocal /recsys2021/datapre_stage2/stage2_valid /workspace/data/processed_data
 echo -e "\n"
 sleep 10
 echo -e "\nstart training stage 1...."
